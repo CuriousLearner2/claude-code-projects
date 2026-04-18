@@ -1,0 +1,21 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+venv/
+.env
+
+# Large data files
+*.txt
+!README.md
+!SETUP.md
+!CLAUDE.md
+
+# Sensitive API Credentials (CRITICAL for safety)
+credentials.json
+token.json
+
+# Claude Code specifics
+.claude/

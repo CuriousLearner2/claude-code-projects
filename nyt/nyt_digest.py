@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""
+Daily NYT digest — fetches top 5 articles from selected sections
+and sends an HTML email summary.
+"""
+import base64
+import os
+import sys
+import time
+from datetime import datetime, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from pathlib import Path
+from typing import List, Dict, Optional
+
+import requests
+
+RECIPIENT = "gautambiswas2004@gmail.com"
+
+# Sections to fetch — maps display name to API endpoint
+SECTIONS = {
+    "Most Popular":  ("popular", "https://api.nytimes.com/svc/mostpopular/v2/viewed/1.json"),
+    "Well":          ("top",     "https://api.nytimes.com/svc/topstories/v2/well.json"),
+    "Business":      ("top",     "https://api.nytimes.com/svc/topstories/v2/business.json"),
+    "Health":        ("top",     "https://api.nytimes.com/svc/topstories/v2/health.json"),
+    "Science":       ("top",     "https://api.nytimes.com/svc/topstories/v2/science.json"),
+    "Upshot":        ("top",     "https://api.nytimes.com/svc/topstories/v2/upshot.json"),
+}
+
+TOP_N = 5
+
+
+def _load_env():
+    zshrc = Path.home() / ".zshrc"
+    if not zshrc.exists():
+        return
+    for line in zshrc.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("export "):
+            assignment = line[7:]
+            if "=" in assignment:
+                key, value = assignment.split("=", 1)
+                key, value = key.strip(), value.strip()
+                if (value.startswith('"') and value.endswith('"')) or \
+                   (value.startswith("'") and value.endswith("'")):
+                    value = value[1:-1]
+                if key and value:
+                    os.environ[key] = value
+
+
+def _parse_date(date_str: str) -> Optional[datetime]:
+    """Parse NYT date strings to datetime."""
+    if not date_str:
+        return None
+    try:
+        return datetime.fromisoformat(date_str[:25])  # handles 2026-04-08T09:00:00-04:00
+    except ValueError:
+        pass
+    try:
+        return datetime.strptime(date_str[:10], "%Y-%m-%d")
+    except ValueError:
+        pass
+    return None
+
+
+def _fetch_section(api_type: str, url: str, api_key: str, name: str = "") -> List[Dict]:
+    """Fetch top articles for a section, filtered to the last 48 hours."""
+    label = f"[{name}] " if name else ""
+    try:
+        for attempt in range(3):
+            resp = requests.get(url, params={"api-key": api_key}, timeout=10)
+            if resp.status_code == 429:
+                wait = 12 * (attempt + 1)
+                print(f"  ⏳ {label}Rate limited (429), retrying in {wait}s...")
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            break
+        else:
+            print(f"  ⚠ {label}Rate limit exceeded after 3 retries")
+            return []
+        data = resp.json()
+        results = data.get("results", [])
+
+        from datetime import timedelta
+        cutoff = datetime.now() - timedelta(hours=48)
+
+        def _to_article(item):
+            pub_date_str = item.get("published_date") or item.get("updated", "")
+            return {
+                "title":    item.get("title", ""),
+                "abstract": item.get("abstract", ""),
+                "url":      item.get("url", ""),
+                "byline":   item.get("byline", ""),
+                "date":     pub_date_str[:10] if pub_date_str else "",
+                "_pub_date": _parse_date(pub_date_str),
+            }
+
+        all_articles = [_to_article(item) for item in results]
+
+        # Try recent articles first (last 48h)
+        recent = [
+            a for a in all_articles
+            if a["_pub_date"] is None or
+               a["_pub_date"].replace(tzinfo=None) >= cutoff.replace(tzinfo=None)
+        ]
+
+        # Fall back to most recent available if section publishes infrequently
+        pool = recent if recent else all_articles
+        articles = [{k: v for k, v in a.items() if k != "_pub_date"}
+                    for a in pool[:TOP_N]]
+
+        return articles
+    except Exception as e:
+        print(f"  ⚠ {label}Failed to fetch {url}: {e}")
+        return []
+
+
+def _section_html(name: str, articles: List[Dict]) -> str:
+    """Render one section as HTML."""
+    color_map = {
+        "Most Popular": "#c05621",
+        "Well":         "#276749",
+        "Business":     "#2c5282",
+        "Health":       "#6b46c1",
+        "Upshot":       "#2d3748",
+    }
+    color = color_map.get(name, "#2d3748")
+
+    if not articles:
+        return f"""
+        <div style="margin-bottom:28px;">
+          <h2 style="color:{color};border-bottom:2px solid {color};padding-bottom:4px;font-family:Georgia,serif;">{name}</h2>
+          <p style="color:#718096;font-size:13px;">No articles available.</p>
+        </div>"""
+
+    items_html = ""
+    for i, a in enumerate(articles, 1):
+        title = a.get("title", "")
+        abstract = a.get("abstract", "")
+        url = a.get("url", "#")
+        byline = a.get("byline", "")
+        date = a.get("date", "")
+        meta_parts = [p for p in [byline, date] if p]
+        meta_html = f'<div style="color:#718096;font-size:11px;margin-top:2px;">{" · ".join(meta_parts)}</div>' if meta_parts else ""
+
+        items_html += f"""
+        <div style="margin-bottom:14px;padding-left:10px;border-left:3px solid {color};">
+          <div style="font-size:12px;color:{color};font-weight:bold;margin-bottom:2px;">{i}</div>
+          <a href="{url}" style="color:#1a202c;font-size:15px;font-weight:bold;text-decoration:none;font-family:Georgia,serif;">{title}</a>
+          {meta_html}
+          <div style="color:#4a5568;font-size:13px;margin-top:4px;">{abstract}</div>
+        </div>"""
+
+    return f"""
+    <div style="margin-bottom:32px;">
+      <h2 style="color:{color};border-bottom:2px solid {color};padding-bottom:4px;font-family:Georgia,serif;">{name}</h2>
+      {items_html}
+    </div>"""
+
+
+def _build_email_html(sections_data: Dict[str, List[Dict]]) -> str:
+    now = datetime.now().strftime("%A, %B %-d, %Y")
+    sections_html = "".join(
+        _section_html(name, sections_data.get(name, []))
+        for name in SECTIONS
+    )
+    return f"""
+    <html>
+    <body style="font-family:Arial,sans-serif;max-width:680px;margin:auto;padding:24px;background:#fff;">
+      <div style="text-align:center;margin-bottom:28px;">
+        <div style="font-size:28px;font-family:Georgia,serif;font-weight:bold;letter-spacing:1px;">
+          The New York Times
+        </div>
+        <div style="color:#718096;font-size:14px;margin-top:4px;">Your Morning Digest · {now}</div>
+      </div>
+      {sections_html}
+      <div style="border-top:1px solid #e2e8f0;margin-top:24px;padding-top:12px;color:#a0aec0;font-size:11px;text-align:center;">
+        Top {TOP_N} articles per section · Powered by NYT API
+      </div>
+    </body>
+    </html>"""
+
+
+def _send_email(subject: str, html_body: str):
+    from listings.utils import get_gmail_service
+    service = get_gmail_service()
+    msg = MIMEMultipart("alternative")
+    msg["To"] = RECIPIENT
+    msg["From"] = RECIPIENT
+    msg["Subject"] = subject
+    msg.attach(MIMEText(html_body, "html"))
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    service.users().messages().send(userId="me", body={"raw": raw}).execute()
+
+
+def main():
+    _load_env()
+
+    api_key = os.getenv("NYT_API_KEY")
+    if not api_key:
+        print("Error: NYT_API_KEY not set")
+        return 1
+
+    print(f"Fetching NYT digest — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+
+    sections_data = {}
+    for name, (api_type, url) in SECTIONS.items():
+        print(f"  Fetching {name}...")
+        sections_data[name] = _fetch_section(api_type, url, api_key, name)
+        time.sleep(0.3)  # be polite to the API
+
+    total = sum(len(v) for v in sections_data.values())
+    print(f"  Fetched {total} articles across {len(SECTIONS)} sections")
+
+    html = _build_email_html(sections_data)
+    subject = f"NYT Morning Digest · {datetime.now().strftime('%b %-d')}"
+    _send_email(subject, html)
+    print(f"  ✓ Email sent to {RECIPIENT}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

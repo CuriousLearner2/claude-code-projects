@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+"""
+Nightly refresh + audit pipeline with email summary.
+Runs: refresh_db → audit_ingest → send summary email.
+Triggered by launchd at 11 PM; email arrives when audit batch completes (~11:10 PM).
+"""
+import base64
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+from datetime import datetime, timedelta, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from pathlib import Path
+
+RECIPIENT = "gautambiswas2004@gmail.com"
+DB_PATH = "listings/listings.db"
+
+
+def _load_env():
+    """Load environment variables from ~/.zshrc."""
+    zshrc = Path.home() / ".zshrc"
+    if not zshrc.exists():
+        return
+    for line in zshrc.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("export "):
+            assignment = line[7:]
+            if "=" in assignment:
+                key, value = assignment.split("=", 1)
+                key, value = key.strip(), value.strip()
+                if (value.startswith('"') and value.endswith('"')) or \
+                   (value.startswith("'") and value.endswith("'")):
+                    value = value[1:-1]
+                if key and value:
+                    os.environ[key] = value
+
+
+def _get_last_timestamp():
+    """Get last ingest timestamp from DB."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        row = conn.execute(
+            "SELECT value FROM sync_state WHERE key = 'last_email_timestamp'"
+        ).fetchone()
+        conn.close()
+        return row[0] if row else "2020-01-01T00:00:00"
+    except Exception:
+        return "2020-01-01T00:00:00"
+
+
+def _run_script(cmd: list) -> tuple[int, str]:
+    """Run a script, streaming output to stdout while also capturing it."""
+    buf = []
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        cwd="/Users/gautambiswas/Claude Code/real-estate",
+    )
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        buf.append(line)
+    proc.wait()
+    return proc.returncode, "".join(buf)
+
+
+def _parse_refresh_output(output: str) -> dict:
+    """Extract key stats from refresh_db output."""
+    stats = {
+        "east_bay_emails": 0,
+        "east_bay_listings": 0,
+        "cleveland_listings": 0,
+    }
+    m = re.search(r"Fetched (\d+) new emails", output)
+    if m:
+        stats["east_bay_emails"] = int(m.group(1))
+
+    m = re.search(r"Successfully ingested (\d+) new listings", output)
+    if m:
+        stats["east_bay_listings"] = int(m.group(1))
+
+    m = re.search(r"Successfully ingested (\d+) new Cleveland listings", output)
+    if m:
+        stats["cleveland_listings"] = int(m.group(1))
+
+    return stats
+
+
+def _parse_audit_output(output: str) -> dict:
+    """Extract key stats from audit_ingest output."""
+    stats = {
+        "emails_audited": 0,
+        "recovered": 0,
+        "needs_review": 0,
+    }
+    m = re.search(r"Large-scale audit: (\d+) emails", output)
+    if m:
+        stats["emails_audited"] = int(m.group(1))
+
+    m = re.search(r"New listings recovered via visual: (\d+)", output)
+    if m:
+        stats["recovered"] = int(m.group(1))
+
+    m = re.search(r"Flagged but no genuine miss \(needs_review\): (\d+)", output)
+    if m:
+        stats["needs_review"] = int(m.group(1))
+
+    return stats
+
+
+def _get_new_listings(since_ts: str) -> list:
+    """Fetch newly ingested listings since timestamp for email body."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("""
+            SELECT address, city, price, beds, baths, house_sqft
+            FROM listings
+            WHERE received_at > ?
+            ORDER BY received_at DESC
+            LIMIT 20
+        """, (since_ts,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def _get_cleveland_new_listings(since_ts: str) -> list:
+    """Fetch newly ingested Cleveland listings since timestamp."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("""
+            SELECT address, price, beds, baths, house_sqft,
+                   distance_to_clinic_miles, distance_to_cwru_miles
+            FROM cleveland_listings
+            WHERE received_at > ?
+            ORDER BY received_at DESC
+            LIMIT 20
+        """, (since_ts,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def _build_email_html(
+    refresh_stats: dict,
+    audit_stats: dict,
+    new_listings: list,
+    cleveland_listings: list,
+    since_ts: str,
+    refresh_ok: bool,
+    audit_ok: bool,
+) -> str:
+    """Build HTML email body."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    status = "✅ Success" if (refresh_ok and audit_ok) else "⚠️ Partial failure"
+
+    rows_html = ""
+    for l in new_listings:
+        price = f"${l['price']:,}" if l.get("price") else "—"
+        sqft = f"{l['house_sqft']:,}" if l.get("house_sqft") else "—"
+        beds = l.get("beds") or "—"
+        baths = l.get("baths") or "—"
+        rows_html += (
+            f"<tr><td>{l['address']}</td><td>{l.get('city','')}</td>"
+            f"<td>{price}</td><td>{beds}bd/{baths}ba</td><td>{sqft}</td></tr>"
+        )
+
+    clev_rows_html = ""
+    for l in cleveland_listings:
+        price = f"${l['price']:,}" if l.get("price") else "—"
+        sqft = f"{l['house_sqft']:,}" if l.get("house_sqft") else "—"
+        beds = l.get("beds") or "—"
+        baths = l.get("baths") or "—"
+        clinic = f"{l['distance_to_clinic_miles']}mi" if l.get("distance_to_clinic_miles") else "—"
+        cwru = f"{l['distance_to_cwru_miles']}mi" if l.get("distance_to_cwru_miles") else "—"
+        clev_rows_html += (
+            f"<tr><td>{l['address']}</td><td>{price}</td>"
+            f"<td>{beds}bd/{baths}ba</td><td>{sqft}</td>"
+            f"<td>{clinic}</td><td>{cwru}</td></tr>"
+        )
+
+    cleveland_section = ""
+    if clev_rows_html:
+        cleveland_section = f"""
+        <h3 style="color:#2c5282;">🏙️ Cleveland University Circle</h3>
+        <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:13px;">
+          <tr style="background:#ebf8ff;">
+            <th>Address</th><th>Price</th><th>Beds/Baths</th>
+            <th>Sqft</th><th>→ Clinic</th><th>→ CWRU</th>
+          </tr>
+          {clev_rows_html}
+        </table>
+        """
+    elif refresh_stats.get("cleveland_listings", 0) == 0:
+        cleveland_section = "<p style='color:#718096;'>No new Cleveland listings today.</p>"
+
+    listings_section = ""
+    if rows_html:
+        listings_section = f"""
+        <h3 style="color:#2c5282;">🏠 East Bay New Listings</h3>
+        <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:13px;">
+          <tr style="background:#f0fff4;">
+            <th>Address</th><th>City</th><th>Price</th><th>Beds/Baths</th><th>Sqft</th>
+          </tr>
+          {rows_html}
+        </table>
+        """
+    else:
+        listings_section = "<p style='color:#718096;'>No new East Bay listings today.</p>"
+
+    return f"""
+    <html><body style="font-family:Arial,sans-serif;max-width:700px;margin:auto;padding:20px;">
+      <h2 style="color:#1a365d;">Daily Listings Refresh — {now}</h2>
+      <p style="font-size:16px;">{status}</p>
+
+      <table style="width:100%;margin-bottom:20px;font-size:14px;">
+        <tr>
+          <td><b>East Bay emails fetched:</b></td><td>{refresh_stats['east_bay_emails']}</td>
+          <td><b>New East Bay listings:</b></td><td>{refresh_stats['east_bay_listings']}</td>
+        </tr>
+        <tr>
+          <td><b>Emails audited:</b></td><td>{audit_stats['emails_audited']}</td>
+          <td><b>Recovered by visual:</b></td><td>{audit_stats['recovered']}</td>
+        </tr>
+        <tr>
+          <td><b>New Cleveland listings:</b></td><td>{refresh_stats['cleveland_listings']}</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+
+      {listings_section}
+      {cleveland_section}
+
+      <p style="color:#a0aec0;font-size:11px;margin-top:30px;">
+        Automated daily refresh · Since {since_ts[:10]}
+      </p>
+    </body></html>
+    """
+
+
+def _send_email(service, subject: str, html_body: str):
+    """Send email via Gmail API."""
+    msg = MIMEMultipart("alternative")
+    msg["To"] = RECIPIENT
+    msg["From"] = RECIPIENT
+    msg["Subject"] = subject
+    msg.attach(MIMEText(html_body, "html"))
+
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    service.users().messages().send(
+        userId="me",
+        body={"raw": raw}
+    ).execute()
+
+
+def main():
+    _load_env()
+
+    print(f"=== Daily Refresh — {datetime.now().strftime('%Y-%m-%d %H:%M')} ===\n")
+
+    since_ts_raw = _get_last_timestamp()
+    # Subtract 1 hour to catch emails whose received_at is slightly before the
+    # stored checkpoint (e.g. clock skew or batch of emails arriving mid-sync).
+    # already_audited in audit_ingest prevents double-processing.
+    try:
+        since_dt = datetime.fromisoformat(since_ts_raw) - timedelta(hours=1)
+        since_ts = since_dt.isoformat()
+    except Exception:
+        since_ts = since_ts_raw
+    python = sys.executable
+
+    # Step 1: refresh_db
+    print("Step 1: Running refresh_db.py...")
+    rc1, out1 = _run_script([python, "-u", "refresh_db.py"])
+    refresh_ok = rc1 == 0
+    print(out1)
+    refresh_stats = _parse_refresh_output(out1)
+
+    # Step 2: audit_ingest
+    print("Step 2: Running audit_ingest.py...")
+    rc2, out2 = _run_script([python, "-u", "audit_ingest.py", "--since", since_ts])
+    audit_ok = rc2 == 0
+    print(out2)
+    audit_stats = _parse_audit_output(out2)
+
+    # Step 3: send summary email
+    print("Step 3: Sending summary email...")
+    try:
+        from listings.utils import get_gmail_service
+        service = get_gmail_service()
+
+        new_listings = _get_new_listings(since_ts)
+        cleveland_listings = _get_cleveland_new_listings(since_ts)
+
+        total = refresh_stats["east_bay_listings"] + refresh_stats["cleveland_listings"]
+        subject = f"Listings Refresh: {total} new listing{'s' if total != 1 else ''} — {datetime.now().strftime('%b %-d')}"
+
+        html = _build_email_html(
+            refresh_stats, audit_stats,
+            new_listings, cleveland_listings,
+            since_ts, refresh_ok, audit_ok,
+        )
+        _send_email(service, subject, html)
+        print(f"  ✓ Email sent to {RECIPIENT}")
+    except Exception as e:
+        print(f"  ⚠ Email failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+    return 0 if (refresh_ok and audit_ok) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
