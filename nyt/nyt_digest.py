@@ -64,7 +64,11 @@ def _parse_date(date_str: str) -> Optional[datetime]:
 
 
 def _fetch_section(api_type: str, url: str, api_key: str, name: str = "") -> List[Dict]:
-    """Fetch top articles for a section, filtered to the last 48 hours."""
+    """Fetch top articles for a section.
+
+    Most Popular: returns top N by popularity rank (no date filter — rank is the signal).
+    Other sections: filtered to last 48h, falling back to most recent if sparse.
+    """
     label = f"[{name}] " if name else ""
     try:
         for attempt in range(3):
@@ -82,9 +86,6 @@ def _fetch_section(api_type: str, url: str, api_key: str, name: str = "") -> Lis
         data = resp.json()
         results = data.get("results", [])
 
-        from datetime import timedelta
-        cutoff = datetime.now() - timedelta(hours=48)
-
         def _to_article(item):
             pub_date_str = item.get("published_date") or item.get("updated", "")
             return {
@@ -98,19 +99,23 @@ def _fetch_section(api_type: str, url: str, api_key: str, name: str = "") -> Lis
 
         all_articles = [_to_article(item) for item in results]
 
-        # Try recent articles first (last 48h)
+        # Most Popular: trust the rank, skip date filter
+        if api_type == "popular":
+            return [{k: v for k, v in a.items() if k != "_pub_date"}
+                    for a in all_articles[:TOP_N]]
+
+        # Other sections: prefer articles from last 48h
+        from datetime import timedelta
+        cutoff = datetime.now() - timedelta(hours=48)
         recent = [
             a for a in all_articles
             if a["_pub_date"] is None or
                a["_pub_date"].replace(tzinfo=None) >= cutoff.replace(tzinfo=None)
         ]
-
-        # Fall back to most recent available if section publishes infrequently
         pool = recent if recent else all_articles
-        articles = [{k: v for k, v in a.items() if k != "_pub_date"}
-                    for a in pool[:TOP_N]]
+        return [{k: v for k, v in a.items() if k != "_pub_date"}
+                for a in pool[:TOP_N]]
 
-        return articles
     except Exception as e:
         print(f"  ⚠ {label}Failed to fetch {url}: {e}")
         return []
