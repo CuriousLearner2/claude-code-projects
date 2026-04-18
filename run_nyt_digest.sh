@@ -18,6 +18,12 @@ RETRY_DELAY=300  # 5 minutes
 mkdir -p "$LOG_DIR"
 exec >> "$LOG" 2>&1
 
+# Load .env so iCloud credentials are available
+ENV_FILE="/Users/gautambiswas/Claude Code/.env"
+if [[ -f "$ENV_FILE" ]]; then
+    set -a; source "$ENV_FILE"; set +a
+fi
+
 echo "=== $(date) === $JOB starting ==="
 
 send_alert() {
