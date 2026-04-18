@@ -52,6 +52,18 @@ for attempt in $(seq 1 $MAX_ATTEMPTS); do
         echo "$TODAY" > "$STAMP"
         echo "=== $(date) === $JOB succeeded (attempt $attempt) ==="
         find "$LOG_DIR" -name "${JOB}_*.log" -mtime +7 -delete 2>/dev/null
+
+        # Commit and push DB snapshot to GitHub
+        REPO_DIR="/Users/gautambiswas/Claude Code"
+        cd "$REPO_DIR" || true
+        if git diff --quiet real-estate/listings/listings.db 2>/dev/null; then
+            echo "DB unchanged, skipping git push."
+        else
+            git add real-estate/listings/listings.db nyt/nyt.db 2>/dev/null
+            git commit -m "chore: DB snapshot $(date +%Y-%m-%d)" 2>/dev/null
+            git push origin main 2>/dev/null && echo "DB pushed to GitHub." || echo "WARN: git push failed."
+        fi
+
         exit 0
     fi
     echo "Attempt $attempt failed (exit $EXIT_CODE)"
