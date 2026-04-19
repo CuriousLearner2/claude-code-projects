@@ -16,6 +16,11 @@ venv/
 # Sensitive API Credentials (CRITICAL for safety)
 credentials.json
 token.json
+nyt_cookies.json
+*.db
+.DS_Store
+.ingest_stats.json
+.claude.json
 
 # Claude Code specifics
 .claude/
