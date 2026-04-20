@@ -127,7 +127,7 @@ def _get_new_listings(since_ts: str) -> list:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         rows = conn.execute("""
-            SELECT address, city, price, beds, baths, house_sqft
+            SELECT address, city, neighborhood, price, beds, baths, house_sqft
             FROM listings
             WHERE received_at > ?
             ORDER BY received_at DESC
@@ -177,8 +177,10 @@ def _build_email_html(
         sqft = f"{l['house_sqft']:,}" if l.get("house_sqft") else "—"
         beds = l.get("beds") or "—"
         baths = l.get("baths") or "—"
+        neighborhood = l.get("neighborhood") or "—"
         rows_html += (
             f"<tr><td>{l['address']}</td><td>{l.get('city','')}</td>"
+            f"<td>{neighborhood}</td>"
             f"<td>{price}</td><td>{beds}bd/{baths}ba</td><td>{sqft}</td></tr>"
         )
 
@@ -217,7 +219,7 @@ def _build_email_html(
         <h3 style="color:#2c5282;">🏠 East Bay New Listings</h3>
         <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:13px;">
           <tr style="background:#f0fff4;">
-            <th>Address</th><th>City</th><th>Price</th><th>Beds/Baths</th><th>Sqft</th>
+            <th>Address</th><th>City</th><th>Neighborhood</th><th>Price</th><th>Beds/Baths</th><th>Sqft</th>
           </tr>
           {rows_html}
         </table>
