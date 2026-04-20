@@ -16,6 +16,13 @@ from typing import List, Dict, Optional
 import requests
 
 RECIPIENT = "gautambiswas2004@gmail.com"
+RUN_LOG = Path.home() / "Claude Code" / ".run_log"
+
+
+def _write_run_log(name: str, status: str):
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    with open(RUN_LOG, "a") as f:
+        f.write(f"{ts}  {name:<30}  {status}\n")
 
 # Sections to fetch — maps display name to API endpoint
 SECTIONS = {
@@ -222,6 +229,7 @@ def main():
     subject = f"NYT Morning Digest · {datetime.now().strftime('%b %-d')}"
     _send_email(subject, html)
     print(f"  ✓ Email sent to {RECIPIENT}")
+    _write_run_log("nyt-digest", "✓ OK")
     return 0
 
 

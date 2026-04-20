@@ -17,6 +17,14 @@ from pathlib import Path
 
 RECIPIENT = "gautambiswas2004@gmail.com"
 DB_PATH = "listings/listings.db"
+RUN_LOG = Path.home() / "Claude Code" / ".run_log"
+
+
+def _write_run_log(name: str, status: str):
+    """Append a timestamped run record to the shared run log."""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    with open(RUN_LOG, "a") as f:
+        f.write(f"{ts}  {name:<30}  {status}\n")
 
 
 def _load_env():
@@ -316,7 +324,30 @@ def main():
         import traceback
         traceback.print_exc()
 
-    return 0 if (refresh_ok and audit_ok) else 1
+    rc = 0 if (refresh_ok and audit_ok) else 1
+    status = "✓ OK" if rc == 0 else "⚠ PARTIAL FAILURE"
+    _write_run_log("listings-refresh", status)
+
+    # Push DB backup to git
+    try:
+        import subprocess as _sp
+        _sp.run(
+            ["git", "add", "listings/listings.db", "listings/database.db"],
+            cwd="/Users/gautambiswas/Claude Code/real-estate", check=True
+        )
+        _sp.run(
+            ["git", "commit", "-m", f"chore: listings DB backup {datetime.now().strftime('%Y-%m-%d %H:%M')}"],
+            cwd="/Users/gautambiswas/Claude Code/real-estate", check=True
+        )
+        _sp.run(
+            ["git", "push", "origin", "main"],
+            cwd="/Users/gautambiswas/Claude Code/real-estate", check=True
+        )
+        print("  ✓ DB pushed to git")
+    except Exception as e:
+        print(f"  ⚠ Git push failed: {e}")
+
+    return rc
 
 
 if __name__ == "__main__":

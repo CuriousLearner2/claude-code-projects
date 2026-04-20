@@ -1020,3 +1020,24 @@ if __name__ == "__main__":
         after=args.after,
         before=args.before,
     )
+
+    # Log run timestamp
+    from pathlib import Path as _Path
+    from datetime import datetime as _dt
+    _log = _Path.home() / "Claude Code" / ".run_log"
+    with open(_log, "a") as _f:
+        _f.write(f"{_dt.now().strftime('%Y-%m-%d %H:%M')}  {'nyt-recipe-ingest':<30}  ✓ OK\n")
+
+    # Push recipe DB to git
+    import subprocess as _sp
+    try:
+        _sp.run(["git", "add", "nyt/nyt.db"],
+                cwd="/Users/gautambiswas/Claude Code/real-estate", check=True)
+        _sp.run(["git", "commit", "-m",
+                 f"chore: nyt recipe DB backup {_dt.now().strftime('%Y-%m-%d %H:%M')}"],
+                cwd="/Users/gautambiswas/Claude Code/real-estate", check=True)
+        _sp.run(["git", "push", "origin", "main"],
+                cwd="/Users/gautambiswas/Claude Code/real-estate", check=True)
+        print("  ✓ Recipe DB pushed to git")
+    except Exception as _e:
+        print(f"  ⚠ Git push failed: {_e}")
