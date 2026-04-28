@@ -15,6 +15,9 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
+# Add current directory to path so imports work from any location
+sys.path.insert(0, str(Path(__file__).parent))
+
 RECIPIENT = "gautambiswas2004@gmail.com"
 DB_PATH = "listings/listings.db"
 RUN_LOG = Path.home() / "Claude Code" / ".run_log"
@@ -272,84 +275,163 @@ def _send_email(service, subject: str, html_body: str):
     ).execute()
 
 
+def _send_error_email(service, error_title: str, error_details: str, remedy: str):
+    """Send error report email with remediation steps."""
+    html = f"""
+    <html><body style="font-family:Arial,sans-serif;max-width:700px;margin:auto;padding:20px;">
+      <h2 style="color:#c53030;">❌ Listings Refresh Error — {error_title}</h2>
+      <p style="font-size:16px;color:#742a2a;background:#fed7d7;padding:10px;border-radius:5px;">
+        <b>Error:</b> {error_details}
+      </p>
+      <p><b>How to fix:</b></p>
+      <pre style="background:#f5f5f5;padding:10px;border-radius:5px;overflow:auto;">{remedy}</pre>
+      <p style="color:#a0aec0;font-size:11px;margin-top:30px;">
+        Automated daily refresh · {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
+      </p>
+    </body></html>
+    """
+    _send_email(service, f"🚨 Listings Refresh Error: {error_title}", html)
+
+
 def main():
+    """Run daily refresh pipeline with guaranteed status email and logging."""
     _load_env()
 
     print(f"=== Daily Refresh — {datetime.now().strftime('%Y-%m-%d %H:%M')} ===\n")
 
-    since_ts_raw = _get_last_timestamp()
-    # Subtract 1 hour to catch emails whose received_at is slightly before the
-    # stored checkpoint (e.g. clock skew or batch of emails arriving mid-sync).
-    # already_audited in audit_ingest prevents double-processing.
+    # Outer try-except to guarantee email and logging even on fatal errors
+    refresh_ok = False
+    audit_ok = False
+    refresh_stats = {}
+    audit_stats = {}
+    new_listings = []
+    cleveland_listings = []
+    since_ts = None
+    service = None
+    exception_occurred = None
+
     try:
-        since_dt = datetime.fromisoformat(since_ts_raw) - timedelta(hours=1)
-        since_ts = since_dt.isoformat()
-    except Exception:
-        since_ts = since_ts_raw
-    python = sys.executable
+        since_ts_raw = _get_last_timestamp()
+        # Subtract 1 hour to catch emails whose received_at is slightly before the
+        # stored checkpoint (e.g. clock skew or batch of emails arriving mid-sync).
+        # already_audited in audit_ingest prevents double-processing.
+        try:
+            since_dt = datetime.fromisoformat(since_ts_raw) - timedelta(hours=1)
+            since_ts = since_dt.isoformat()
+        except Exception:
+            since_ts = since_ts_raw
+        python = sys.executable
 
-    # Step 1: refresh_db
-    print("Step 1: Running refresh_db.py...")
-    rc1, out1 = _run_script([python, "-u", "refresh_db.py"])
-    refresh_ok = rc1 == 0
-    print(out1)
-    refresh_stats = _parse_refresh_output(out1)
+        # Step 1: refresh_db
+        print("Step 1: Running refresh_db.py...")
+        rc1, out1 = _run_script([python, "-u", "refresh_db.py"])
+        refresh_ok = rc1 == 0
+        print(out1)
+        refresh_stats = _parse_refresh_output(out1)
 
-    # Step 2: audit_ingest
-    print("Step 2: Running audit_ingest.py...")
-    rc2, out2 = _run_script([python, "-u", "audit_ingest.py", "--since", since_ts])
-    audit_ok = rc2 == 0
-    print(out2)
-    audit_stats = _parse_audit_output(out2)
+        # Step 2: audit_ingest
+        print("Step 2: Running audit_ingest.py...")
+        rc2, out2 = _run_script([python, "-u", "audit_ingest.py", "--since", since_ts])
+        audit_ok = rc2 == 0
+        print(out2)
+        audit_stats = _parse_audit_output(out2)
 
-    # Step 3: send summary email
-    print("Step 3: Sending summary email...")
-    try:
+        # Step 3: prepare email data
+        print("Step 3: Preparing summary email...")
         from listings.utils import get_gmail_service
         service = get_gmail_service()
 
         new_listings = _get_new_listings(since_ts)
         cleveland_listings = _get_cleveland_new_listings(since_ts)
 
-        total = refresh_stats["east_bay_listings"] + refresh_stats["cleveland_listings"]
-        subject = f"Listings Refresh: {total} new listing{'s' if total != 1 else ''} — {datetime.now().strftime('%b %-d')}"
+        # Check for silent failures
+        if "Fetched" in out1 and "Cleveland" in out1:
+            # Check if Cleveland emails were fetched but produced zero listings
+            if "Fetched" in out1 and refresh_stats["cleveland_listings"] == 0:
+                # Check if this looks like an anomaly (emails were fetched but nothing ingested)
+                if "Fetched" in out1 and "No new Cleveland listings found" in out1:
+                    # This might be OK if there are genuinely no Cleveland listings
+                    # But we should check if iCloud credentials are working
+                    if "iCloud fetch failed" in out1 or "LOGIN command error" in out1:
+                        _send_error_email(
+                            service,
+                            "iCloud Authentication Failed",
+                            "Cleveland ingest failed to connect to iCloud IMAP.",
+                            "Fix: Verify iCloud app password in ~/.zshrc\n"
+                            "  export ICLOUD_APP_PASSWORD='your-app-password'\n"
+                            "  Then run: source ~/.zshrc"
+                        )
+                        print(f"  ✓ Error email sent to {RECIPIENT}")
 
-        html = _build_email_html(
-            refresh_stats, audit_stats,
-            new_listings, cleveland_listings,
-            since_ts, refresh_ok, audit_ok,
-        )
-        _send_email(service, subject, html)
-        print(f"  ✓ Email sent to {RECIPIENT}")
     except Exception as e:
-        print(f"  ⚠ Email failed: {e}")
+        exception_occurred = e
+        print(f"  ⚠ Unexpected error during job execution: {e}")
         import traceback
         traceback.print_exc()
 
-    rc = 0 if (refresh_ok and audit_ok) else 1
-    status = "✓ OK" if rc == 0 else "⚠ PARTIAL FAILURE"
-    _write_run_log("listings-refresh", status)
+    # ALWAYS send a status email (Layer 2)
+    try:
+        if not service:
+            from listings.utils import get_gmail_service
+            service = get_gmail_service()
 
-    # Push DB backup to git
+        if exception_occurred:
+            # Send error email for unexpected exceptions
+            import traceback
+            tb_str = traceback.format_exc()
+            _send_error_email(
+                service,
+                "Job Execution Error",
+                f"Unexpected error: {str(exception_occurred)}",
+                tb_str
+            )
+        else:
+            # Send normal status email
+            total = refresh_stats.get("east_bay_listings", 0) + refresh_stats.get("cleveland_listings", 0)
+            subject = f"Listings Refresh: {total} new listing{'s' if total != 1 else ''} — {datetime.now().strftime('%b %-d')}"
+
+            html = _build_email_html(
+                refresh_stats, audit_stats,
+                new_listings, cleveland_listings,
+                since_ts or "1970-01-01", refresh_ok, audit_ok,
+            )
+            _send_email(service, subject, html)
+            print(f"  ✓ Summary email sent to {RECIPIENT}")
+    except Exception as e:
+        print(f"  ⚠ Failed to send status email: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # ALWAYS write to run log (so timeout_monitor can detect completion)
+    try:
+        rc = 0 if (refresh_ok and audit_ok and not exception_occurred) else 1
+        status = "✓ OK" if rc == 0 else "⚠ PARTIAL FAILURE"
+        if exception_occurred:
+            status = "❌ ERROR"
+        _write_run_log("listings-refresh", status)
+    except Exception as e:
+        print(f"  ⚠ Failed to write run log: {e}")
+
+    # Try to push DB backup to git
     try:
         import subprocess as _sp
         _sp.run(
-            ["git", "add", "listings/listings.db", "listings/database.db"],
+            ["/usr/bin/git", "add", "listings/listings.db", "listings/database.db"],
             cwd="/Users/gautambiswas/Claude Code/real-estate", check=True
         )
         _sp.run(
-            ["git", "commit", "-m", f"chore: listings DB backup {datetime.now().strftime('%Y-%m-%d %H:%M')}"],
+            ["/usr/bin/git", "commit", "-m", f"chore: listings DB backup {datetime.now().strftime('%Y-%m-%d %H:%M')}"],
             cwd="/Users/gautambiswas/Claude Code/real-estate", check=True
         )
         _sp.run(
-            ["git", "push", "origin", "main"],
+            ["/usr/bin/git", "push", "origin", "main"],
             cwd="/Users/gautambiswas/Claude Code/real-estate", check=True
         )
         print("  ✓ DB pushed to git")
     except Exception as e:
         print(f"  ⚠ Git push failed: {e}")
 
-    return rc
+    return rc if not exception_occurred else 1
 
 
 if __name__ == "__main__":

@@ -15,6 +15,9 @@ from typing import List, Dict, Optional
 
 import requests
 
+# Add parent directory to path so imports work from any location
+sys.path.insert(0, str(Path(__file__).parent.parent / "real-estate"))
+
 RECIPIENT = "gautambiswas2004@gmail.com"
 RUN_LOG = Path.home() / "Claude Code" / ".run_log"
 
@@ -31,6 +34,7 @@ SECTIONS = {
     "Business":      ("top",     "https://api.nytimes.com/svc/topstories/v2/business.json"),
     "Health":        ("top",     "https://api.nytimes.com/svc/topstories/v2/health.json"),
     "Science":       ("top",     "https://api.nytimes.com/svc/topstories/v2/science.json"),
+    "Technology":    ("top",     "https://api.nytimes.com/svc/topstories/v2/technology.json"),
     "Upshot":        ("top",     "https://api.nytimes.com/svc/topstories/v2/upshot.json"),
 }
 
@@ -135,6 +139,7 @@ def _section_html(name: str, articles: List[Dict]) -> str:
         "Well":         "#276749",
         "Business":     "#2c5282",
         "Health":       "#6b46c1",
+        "Technology":   "#1e40af",
         "Upshot":       "#2d3748",
     }
     color = color_map.get(name, "#2d3748")

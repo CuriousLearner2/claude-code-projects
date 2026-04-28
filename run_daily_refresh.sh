@@ -62,12 +62,12 @@ for attempt in $(seq 1 $MAX_ATTEMPTS); do
         # Commit and push DB snapshot to GitHub
         REPO_DIR="/Users/gautambiswas/Claude Code"
         cd "$REPO_DIR" || true
-        if git diff --quiet real-estate/listings/listings.db 2>/dev/null; then
+        if /usr/bin/git diff --quiet real-estate/listings/listings.db 2>/dev/null; then
             echo "DB unchanged, skipping git push."
         else
-            git add real-estate/listings/listings.db nyt/nyt.db 2>/dev/null
-            git commit -m "chore: DB snapshot $(date +%Y-%m-%d)" 2>/dev/null
-            git push origin main 2>/dev/null && echo "DB pushed to GitHub." || echo "WARN: git push failed."
+            /usr/bin/git add real-estate/listings/listings.db nyt/nyt.db 2>/dev/null
+            /usr/bin/git commit -m "chore: DB snapshot $(date +%Y-%m-%d)" 2>/dev/null
+            /usr/bin/git push origin main 2>/dev/null && echo "DB pushed to GitHub." || echo "WARN: git push failed."
         fi
 
         exit 0
