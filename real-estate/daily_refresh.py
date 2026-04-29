@@ -344,6 +344,10 @@ def main():
         new_listings = _get_new_listings(since_ts)
         cleveland_listings = _get_cleveland_new_listings(since_ts)
 
+        # Use actual listing counts from database, not parsed output
+        refresh_stats["east_bay_listings"] = len(new_listings)
+        refresh_stats["cleveland_listings"] = len(cleveland_listings)
+
         # Check for silent failures
         if "Fetched" in out1 and "Cleveland" in out1:
             # Check if Cleveland emails were fetched but produced zero listings
