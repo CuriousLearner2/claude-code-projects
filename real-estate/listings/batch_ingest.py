@@ -47,7 +47,7 @@ def run_batch_ingest(conn: sqlite3.Connection, service) -> int:
         gmail_id = email["id"]
         props = _try_regex_parse(email)
 
-        if _needs_claude(props):
+        if _needs_claude(props, email):
             emails_needing_claude[gmail_id] = email
         else:
             regex_results[gmail_id] = props
@@ -191,14 +191,27 @@ def _try_regex_parse(email: Dict) -> List[Dict]:
     return []
 
 
-def _needs_claude(props: List[Dict]) -> bool:
-    """Check if parsed properties need Claude for validation/completion."""
-    # Need Claude if:
-    # - No results from regex
-    # - Any result missing address or price
+def _needs_claude(props: List[Dict], email: Dict | None = None) -> bool:
+    """
+    Check if parsed properties need Claude for validation/completion.
+    For digest emails, use weaker criteria (< 3 properties found) to trigger Claude.
+    """
+    # Always need Claude if no results
     if not props:
         return True
 
+    # Check if this is a digest email (from subject line)
+    is_digest = False
+    if email:
+        subject = email.get("subject", "")
+        is_digest = bool(re.search(r'\d+\s*Results? for', subject, re.IGNORECASE))
+
+    # For digest emails: trigger Claude if we found very few properties (likely weak extraction)
+    # or if any property is missing critical fields
+    if is_digest and len(props) < 3:
+        return True
+
+    # Standard check: missing address or price
     for prop in props:
         if not prop.get("address") or prop.get("price") is None:
             return True

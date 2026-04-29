@@ -85,15 +85,54 @@ def _driving_distance_miles(
 
 
 def _fetch_cleveland_emails(service, last_ts: str) -> List[Dict]:
-    """Fetch Redfin emails mentioning Cleveland, OH since last_ts."""
-    query = 'from:listings@redfin.com "Cleveland" "OH"'
-    msgs = fetch_emails_by_query(service, query, last_ts)
+    """Fetch Redfin emails mentioning Cleveland, OH since last_ts from both Gmail and iCloud."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    import icloud_imap
+
     emails = []
-    for msg_info in msgs:
-        email = get_full_email(service, msg_info["id"])
-        if email:
-            email["source"] = "Redfin"
-            emails.append(_normalize_email(email))
+
+    # Fetch from iCloud IMAP
+    try:
+        since_date = None
+        if last_ts and last_ts != "0":
+            try:
+                since_date = datetime.fromisoformat(last_ts).strftime("%Y-%m-%d")
+            except Exception:
+                pass
+
+        icloud_emails = icloud_imap.fetch_emails("redfin.com", since_date=since_date)
+        for email in icloud_emails:
+            # Filter for Cleveland mentions
+            subject = (email.get("subject") or "").lower()
+            body = ((email.get("plain_body") or "") + (email.get("html_body") or "")).lower()
+            if "cleveland" in (subject + body) and "oh" in (subject + body):
+                normalized = _normalize_email({
+                    "subject": email.get("subject"),
+                    "from": email.get("from"),
+                    "received_at": email.get("received_at"),
+                    "html_body": email.get("html_body"),
+                    "plain_body": email.get("plain_body"),
+                    "id": email.get("id"),
+                    "source": "Redfin"
+                })
+                emails.append(normalized)
+    except Exception as e:
+        print(f"  ⚠ iCloud fetch failed: {e}")
+
+    # Also fetch from Gmail for redundancy
+    try:
+        query = 'from:listings@redfin.com "Cleveland" "OH"'
+        msgs = fetch_emails_by_query(service, query, last_ts)
+        for msg_info in msgs:
+            email = get_full_email(service, msg_info["id"])
+            if email:
+                email["source"] = "Redfin"
+                emails.append(_normalize_email(email))
+    except Exception as e:
+        print(f"  ⚠ Gmail fetch failed: {e}")
+
     return emails
 
 
@@ -103,6 +142,10 @@ def _try_regex_parse_cleveland(email: Dict) -> List[Dict]:
 
     html_body = email.get("html_body", "")
     subject = email.get("subject", "")
+
+    # Price decrease/change emails need Claude (different format than new listings)
+    if any(phrase in subject.lower() for phrase in ["price", "decrease", "drop", "reduced"]):
+        return []
 
     props = extract_properties_from_batch_email(html_body, subject)
     if props:
@@ -220,11 +263,13 @@ def _build_cleveland_batch_requests(emails_needing_claude: Dict[str, Dict]) -> L
 
 def _is_university_circle(prop: Dict) -> bool:
     """Return True if property is in University Circle, Cleveland OH."""
-    city = (prop.get("city") or "").strip().lower()
-    if city != "cleveland":
-        return False
     neighborhood = (prop.get("neighborhood") or "").strip().lower()
-    return neighborhood in ALLOWED_NEIGHBORHOODS
+    # Accept if neighborhood is University Circle (email already Cleveland-filtered)
+    if neighborhood in ALLOWED_NEIGHBORHOODS:
+        return True
+    # Otherwise require explicit Cleveland city
+    city = (prop.get("city") or "").strip().lower()
+    return city == "cleveland" and neighborhood in ALLOWED_NEIGHBORHOODS
 
 
 def _upsert_cleveland_listing(conn: sqlite3.Connection, listing: Dict) -> None:

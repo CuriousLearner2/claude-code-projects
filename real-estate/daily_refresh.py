@@ -412,22 +412,28 @@ def main():
     except Exception as e:
         print(f"  ⚠ Failed to write run log: {e}")
 
-    # Try to push DB backup to git
+    # Try to push DB backups and code to git
     try:
         import subprocess as _sp
+        # Add listings DB backup
         _sp.run(
             ["/usr/bin/git", "add", "listings/listings.db", "listings/database.db"],
             cwd="/Users/gautambiswas/Claude Code/real-estate", check=True
         )
+        # Add NYT recipe DB and code (from parent directory)
         _sp.run(
-            ["/usr/bin/git", "commit", "-m", f"chore: listings DB backup {datetime.now().strftime('%Y-%m-%d %H:%M')}"],
+            ["/usr/bin/git", "add", "../nyt/nyt.db", "../nyt/nyt_recipe_ingest.py", "../nyt/nyt_digest.py"],
+            cwd="/Users/gautambiswas/Claude Code/real-estate", check=True
+        )
+        _sp.run(
+            ["/usr/bin/git", "commit", "-m", f"chore: DB backup and code updates {datetime.now().strftime('%Y-%m-%d %H:%M')}"],
             cwd="/Users/gautambiswas/Claude Code/real-estate", check=True
         )
         _sp.run(
             ["/usr/bin/git", "push", "origin", "main"],
             cwd="/Users/gautambiswas/Claude Code/real-estate", check=True
         )
-        print("  ✓ DB pushed to git")
+        print("  ✓ Listings & recipe DBs + code pushed to git")
     except Exception as e:
         print(f"  ⚠ Git push failed: {e}")
 

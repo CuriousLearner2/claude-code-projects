@@ -18,6 +18,7 @@ credentials.json
 token.json
 nyt_cookies.json
 *.db
+!nyt/nyt.db
 .DS_Store
 .ingest_stats.json
 .claude.json

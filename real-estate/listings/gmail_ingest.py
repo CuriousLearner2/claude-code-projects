@@ -1288,8 +1288,12 @@ def parse_zillow_digest(plain_body: str, html_body: str, received_at: str) -> Li
         for tag in soup.find_all(['script', 'style']):
             tag.decompose()
 
-        # Find all property cards: selector patterns for Zillow digest
-        cards = soup.select('[class*="propertyCard"], [class*="listing"], [class*="result"]')
+        # Find all property cards: expanded selector patterns for Zillow variations
+        cards = soup.select(
+            '[class*="propertyCard"], [class*="listing"], [class*="result"], '
+            '[class*="property"], [class*="card"], '
+            'div[data-testid*="property"], li[class*="item"]'
+        )
 
         # If found cards, extract from them
         if cards:
@@ -1307,18 +1311,23 @@ def parse_zillow_digest(plain_body: str, html_body: str, received_at: str) -> Li
 
             return properties
 
-    # Fallback: plain text parsing (existing logic)
+    # Fallback: plain text parsing with improved robustness
     search_text = plain_body or ""
     if not search_text:
         return properties
 
-    # Split by "For sale." to find property blocks
-    blocks = re.split(r'For sale\.', search_text)
+    # More flexible property block splitting:
+    # Match "For sale." or "For sale\n" OR start of price pattern
+    blocks = re.split(r'(?:For sale\.|\nFor sale\n|\$)', search_text)
+
+    # If we split on "$", prepend it back to each block (except first)
+    if len(blocks) > 1 and '\n' not in blocks[0][:10]:
+        blocks = [blocks[0]] + ['$' + b for b in blocks[1:]]
 
     # First block is header, skip it
     for block in blocks[1:]:
-        # Extract price: "$XXX,XXX"
-        price_match = re.search(r'\$([\d,]+)', block)
+        # Extract price: "$XXX,XXX" or from start of block if "$" was prepended
+        price_match = re.search(r'\$[\s]*([\d,]+)', block)
         price = None
         if price_match:
             try:
@@ -1328,7 +1337,7 @@ def parse_zillow_digest(plain_body: str, html_body: str, received_at: str) -> Li
 
         # Extract beds/baths/sqft: "X bd | X ba | X,XXX sqft"
         beds_baths_sqft_match = re.search(
-            r'(\d+)\s*bd\s*\|\s*(\d+)\s*ba\s*\|\s*([\d,]+)\s*(?:sqft|sq\.?\s*ft\.?)',
+            r'(\d+(?:\.\d)?)\s*bd\s*\|\s*(\d+(?:\.\d)?)\s*ba\s*\|\s*([\d,]+)\s*(?:sqft|sq\.?\s*ft\.?)',
             block,
             re.IGNORECASE
         )
@@ -1345,13 +1354,13 @@ def parse_zillow_digest(plain_body: str, html_body: str, received_at: str) -> Li
             except (ValueError, IndexError):
                 pass
 
-        # Extract address with city
+        # Extract address with city - improved pattern for flexibility
         address = None
         city = None
         address_match = re.search(
-            r'(?:^|\n)\s*(\d+[A-Za-z0-9\s]*?(?:St|Ave|Rd|Blvd|Dr|Ln|Ct|Way|Parkway|Street|Avenue|Road|Boulevard|Drive|Lane|Court|Ter|Pl|Place|Terrace|Cir|Circle)(?:\s+(?:APT|Apt|apt|Unit|unit|#)\s*[A-Za-z0-9]+)?)\s*[,\n]\s*([A-Za-z\s]+?),\s*(?:CA|California)',
+            r'(\d+\s+[A-Za-z0-9\s]*?(?:St|Ave|Rd|Blvd|Dr|Ln|Ct|Way|Parkway|Street|Avenue|Road|Boulevard|Drive|Lane|Court|Ter|Pl|Place|Terrace|Cir|Circle)(?:\s+(?:APT|Apt|apt|Unit|unit|#)\s*[A-Za-z0-9]+)?)\s*[,\n]\s*([A-Za-z\s]+?),\s*(?:CA|California)',
             block,
-            re.IGNORECASE | re.MULTILINE
+            re.IGNORECASE
         )
 
         if address_match:
