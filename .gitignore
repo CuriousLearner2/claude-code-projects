@@ -25,3 +25,4 @@ nyt_cookies.json
 
 # Claude Code specifics
 .claude/
+_archive/
