@@ -8,10 +8,10 @@ import os
 import time
 
 # Configuration
-GEMINI_API_KEY = "AIzaSyCV9kBXFqa2YvhRTA5FL8GBqb8KxHlU84k"
-SENDER_EMAIL = "gautambiswas2004@icloud.com"
-RECEIVER_EMAIL = "gautambiswas2004@icloud.com"
-EMAIL_PASSWORD = "jjho-mufs-iyya-nbit"
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
+RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL")
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
 SMTP_SERVER = "smtp.mail.me.com"
 SMTP_PORT = 587
 

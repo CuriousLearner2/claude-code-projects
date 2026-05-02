@@ -7,7 +7,8 @@ smtp_server = "smtp.mail.me.com"
 smtp_port = 587
 sender_email = "gautambiswas2004@icloud.com"
 receiver_email = "gautambiswas2004@icloud.com"
-password = "jjho-mufs-iyya-nbit"
+import os
+password = os.environ.get("EMAIL_PASSWORD")
 
 subject = "সহজ ভাষায় সংবাদ: ১১টি দলের নতুন আন্দোলন"
 body = """
