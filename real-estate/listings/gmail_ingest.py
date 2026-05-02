@@ -632,13 +632,16 @@ def parse_listing_email(plain_body: str, html_body: str, received_at: str = None
             pass
 
     # Try to extract address (number + street name with street type)
+    # Remove sqft patterns from body before matching to avoid including them in address
+    addr_search_text = re.sub(r'(\d+)\s*(?:sqft|sq\.?\s*ft\.?)\s+', '', plain_body or "", flags=re.IGNORECASE)
+
     # First try full address with city/state
-    address_match = re.search(r'\d+\s+[A-Za-z\s,]+(?:CA|California)(?:\s+\d+)?', plain_body or "", re.IGNORECASE)
+    address_match = re.search(r'\d+\s+[A-Za-z\s,]+(?:CA|California)(?:\s+\d+)?', addr_search_text, re.IGNORECASE)
     if address_match:
         result["address"] = address_match.group(0).strip()
     else:
         # Fallback: just number + street type
-        address_match = re.search(r'(\d+\s+(?:[A-Za-z]+\s+)+(?:St|Ave|Rd|Blvd|Dr|Ln|Ct|Way|Pkwy|Street|Avenue|Road|Boulevard|Drive|Lane|Court|Parkway))', plain_body or "", re.IGNORECASE)
+        address_match = re.search(r'(\d+\s+(?:[A-Za-z]+\s+)+(?:St|Ave|Rd|Blvd|Dr|Ln|Ct|Way|Pkwy|Street|Avenue|Road|Boulevard|Drive|Lane|Court|Parkway))', addr_search_text, re.IGNORECASE)
         if address_match:
             result["address"] = address_match.group(1).strip()
 
