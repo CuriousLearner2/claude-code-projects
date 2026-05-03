@@ -26,8 +26,12 @@ RUN_LOG = Path.home() / "Claude Code" / ".run_log"
 def _write_run_log(name: str, status: str):
     """Append a timestamped run record to the shared run log."""
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-    with open(RUN_LOG, "a") as f:
-        f.write(f"{ts}  {name:<30}  {status}\n")
+    try:
+        with open(RUN_LOG, "a") as f:
+            f.write(f"{ts}  {name:<30}  {status}\n")
+        print(f"  ✓ Wrote to run log: {ts}  {name:<30}  {status}")
+    except Exception as e:
+        print(f"  ✗ Error writing run log to {RUN_LOG}: {e}")
 
 
 def _load_env():
