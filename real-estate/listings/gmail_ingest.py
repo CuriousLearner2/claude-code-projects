@@ -943,6 +943,10 @@ def _extract_card_fields(card_tag, subject: Optional[str] = None) -> Dict:
 
     card_text = card_tag.get_text()
 
+    # Remove sqft patterns from text before extracting address to avoid including them
+    # e.g. "312 sqft 6767 Skyview Dr" should extract as "6767 Skyview Dr" not "312 sqft 6767 Skyview Dr"
+    card_text_clean = re.sub(r'(\d+)\s*(?:sqft|sq\.?\s*ft\.?)\s+', '', card_text, flags=re.IGNORECASE)
+
     # Extract price: first price in a reasonable residential range ($100K–$50M)
     price_matches = re.findall(r'\$\s*([\d,]+)', card_text)
     for p in price_matches:
@@ -963,23 +967,21 @@ def _extract_card_fields(card_tag, subject: Optional[str] = None) -> Dict:
         if link_text:
             result['address'] = link_text
 
-    # Fallback: find address via regex in card text
+    # Fallback: find address via regex in cleaned card text (sqft removed)
     if not result['address']:
         addr_match = re.search(
             r'(\d+\s+[A-Za-z\s]+(?:St|Ave|Rd|Blvd|Dr|Ln|Ct|Way|Pkwy|Street|Avenue|Road|Boulevard|Drive|Lane|Court))',
-            card_text,
+            card_text_clean,
             re.IGNORECASE
         )
         if addr_match:
             result['address'] = addr_match.group(1).strip()
 
-    # Look for full address (with city/state) in card body text
+    # Look for full address (with city/state) in cleaned card body text
     # Redfin cards show: "1068 Aileen St, Oakland, CA 94608"
-    # Use negative lookahead to prevent matching sqft numbers (e.g. "393 Sq. Ft. 2010 Filbert")
-    # that appear before the actual address when cards use redirect URLs instead of direct redfin.com/CA/ links.
     full_addr_match = re.search(
         r'(\d+\s+(?!Sq\.?\s*Ft)([A-Za-z][^,\n]+),\s*([A-Za-z][A-Za-z\s]+?),\s*CA\s*\d{5})',
-        card_text,
+        card_text_clean,
         re.IGNORECASE
     )
     if full_addr_match:
@@ -1318,6 +1320,10 @@ def parse_zillow_digest(plain_body: str, html_body: str, received_at: str) -> Li
     search_text = plain_body or ""
     if not search_text:
         return properties
+
+    # Remove sqft patterns from text before extracting address to avoid including them
+    # e.g. "312 sqft 6767 Skyview Dr" should extract as "6767 Skyview Dr"
+    search_text = re.sub(r'(\d+)\s*(?:sqft|sq\.?\s*ft\.?)\s+', '', search_text, flags=re.IGNORECASE)
 
     # More flexible property block splitting:
     # Match "For sale." or "For sale\n" OR start of price pattern
