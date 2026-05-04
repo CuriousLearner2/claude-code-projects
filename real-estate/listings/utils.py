@@ -24,8 +24,22 @@ SCOPES = [
 
 
 def get_gmail_service():
-    """Get authenticated Gmail API service."""
+    """Get authenticated Gmail API service.
+
+    Automatically detects if credentials.json was regenerated and invalidates
+    the old token.json to prevent mismatch errors.
+    """
     creds = None
+
+    # Check if credentials.json is newer than token.json (indicates regeneration)
+    if os.path.exists(TOKEN_FILE) and os.path.exists(CREDS_FILE):
+        creds_mtime = os.path.getmtime(CREDS_FILE)
+        token_mtime = os.path.getmtime(TOKEN_FILE)
+        if creds_mtime > token_mtime:
+            # credentials.json was regenerated after token.json was created
+            # The old token is now invalid, delete it to force re-authentication
+            os.remove(TOKEN_FILE)
+
     if os.path.exists(TOKEN_FILE):
         creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
 
