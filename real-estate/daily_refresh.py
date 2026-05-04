@@ -437,6 +437,11 @@ def main():
             ["/usr/bin/git", "commit", "-m", f"chore: DB backup and code updates {datetime.now().strftime('%Y-%m-%d %H:%M')}"],
             cwd="/Users/gautambiswas/Claude Code/real-estate", check=True
         )
+        # Pull before push to avoid conflicts
+        _sp.run(
+            ["/usr/bin/git", "pull", "origin", "main", "--rebase"],
+            cwd="/Users/gautambiswas/Claude Code/real-estate", check=False
+        )
         _sp.run(
             ["/usr/bin/git", "push", "origin", "main"],
             cwd="/Users/gautambiswas/Claude Code/real-estate", check=True
