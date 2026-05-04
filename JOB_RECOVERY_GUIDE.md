@@ -70,16 +70,12 @@ done
 - Prevents accidental modification
 - Can only be changed by explicitly changing permissions
 
-✅ **Daily health check** (launchd + 6:55 AM)
-- Detects disabled jobs
-- Auto-repairs most issues
-- Logs to run log
-
-✅ **Cron verification** (independent of launchd)
-- Runs at 8:30 AM (after launchd jobs)
-- Auto-repairs jobs that didn't run
-- Reloads launchd jobs and manually triggers them
-- Sends email alert about repairs made
+✅ **Cron verification with auto-repair** (independent of launchd)
+- Runs at 7:30 AM (30 minutes after scheduled jobs)
+- Detects jobs that failed to run
+- Auto-repairs by reloading launchd jobs and manually triggering them
+- Sends email alert about any repairs made
+- Sufficient time for job completion (typical run time: 1-5 minutes)
 
 ## If All Else Fails
 
