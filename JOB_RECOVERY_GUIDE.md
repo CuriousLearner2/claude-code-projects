@@ -77,8 +77,9 @@ done
 
 ✅ **Cron verification** (independent of launchd)
 - Runs at 8:30 AM (after launchd jobs)
-- Alerts if jobs didn't run
-- Sends email if issues detected
+- Auto-repairs jobs that didn't run
+- Reloads launchd jobs and manually triggers them
+- Sends email alert about repairs made
 
 ## If All Else Fails
 
