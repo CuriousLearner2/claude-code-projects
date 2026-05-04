@@ -27,3 +27,4 @@ nyt_cookies.json
 .claude/
 _archive/
 *.log
+.env
