@@ -1,15 +1,23 @@
 #!/bin/bash
-# Verify that scheduled jobs ran today (runs via cron as backup)
+# Verify that scheduled jobs are running (runs at 7:10 AM, 10 min after start)
 # This is independent of launchd, so it catches launchd failures
-# Auto-repairs jobs that didn't run
+# Auto-repairs jobs that failed to start
 # Usage: crontab -e, then add line for this script
 
 LOG_FILE="/Users/gautambiswas/Claude Code/.run_log"
 TODAY=$(date +%Y-%m-%d)
 ALERT_EMAIL="gautambiswas2004@gmail.com"
 REPAIRS=()
+IN_PROGRESS=()
+FAILED=()
 
-echo "=== Job Verification Check ($(date)) ==="
+echo "=== Job Status Check at 7:10 AM ($(date)) ==="
+
+# Function to check if a process is running
+is_process_running() {
+    local script_name=$1
+    ps aux | grep -E "bash.*$script_name" | grep -v grep > /dev/null
+}
 
 # Function to repair a failed job
 repair_job() {
@@ -38,55 +46,87 @@ repair_job() {
     return 0
 }
 
-# Check if today's health check ran
-if grep -q "$TODAY.*job-health-check.*OK" "$LOG_FILE"; then
-    echo "✓ Health check ran today"
-else
-    echo "⚠ Health check did NOT run today"
-    repair_job "job-health-check" \
-        "$HOME/Library/LaunchAgents/com.gautambiswas.job-health-check.plist" \
-        "/Users/gautambiswas/Claude Code/check_launchd_jobs.sh"
-fi
-
-# Check if nyt-digest ran
+# Check nyt-digest (runs at 7:00 AM)
 if grep -q "$TODAY.*nyt-digest.*OK" "$LOG_FILE"; then
-    echo "✓ NY Times digest ran today"
+    echo "✓ NY Times digest completed"
+elif is_process_running "nyt_digest.py"; then
+    echo "⏳ NY Times digest still running"
+    IN_PROGRESS+=("nyt-digest")
 else
-    echo "⚠ NY Times digest did NOT run today"
+    echo "❌ NY Times digest failed to run"
+    FAILED+=("nyt-digest")
     repair_job "nyt-digest" \
         "$HOME/Library/LaunchAgents/com.gautambiswas.nyt-digest.plist" \
         ""
 fi
 
-# Check if listings-refresh ran
+# Check listings-refresh (runs at 7:00, 9:00, 11:00 AM)
 if grep -q "$TODAY.*listings-refresh.*OK" "$LOG_FILE"; then
-    echo "✓ Listings refresh ran today"
+    echo "✓ Listings refresh completed"
+elif is_process_running "daily_refresh.py\|run_daily_refresh.sh"; then
+    echo "⏳ Listings refresh still running"
+    IN_PROGRESS+=("listings-refresh")
 else
-    echo "⚠ Listings refresh did NOT run today"
+    echo "❌ Listings refresh failed to run"
+    FAILED+=("listings-refresh")
     repair_job "listings-refresh" \
         "$HOME/Library/LaunchAgents/com.gautambiswas.listings-refresh.plist" \
         "/Users/gautambiswas/Claude Code/run_daily_refresh.sh"
 fi
 
-# Send alert if repairs were made
-if [ ${#REPAIRS[@]} -gt 0 ]; then
-    echo ""
-    echo "⚙️ Auto-repairs completed:"
-    for job in "${REPAIRS[@]}"; do
-        echo "  - $job"
-    done
+# Send alerts based on status
+{
+    alert_sent=0
 
-    # Email alert about repairs
-    {
-        echo "Jobs that failed to run were auto-repaired on $TODAY:"
+    # Alert if jobs are still running (normal, just informational)
+    if [ ${#IN_PROGRESS[@]} -gt 0 ]; then
+        echo "Status Report: $TODAY at $(date '+%H:%M')"
         echo ""
+        echo "Jobs still running (started at 7:00 AM):"
+        for job in "${IN_PROGRESS[@]}"; do
+            echo "  ⏳ $job"
+        done
+        echo ""
+        echo "Expected completion: within a few minutes"
+        alert_sent=1
+    fi
+
+    # Alert if auto-repairs were made
+    if [ ${#REPAIRS[@]} -gt 0 ]; then
+        if [ $alert_sent -eq 1 ]; then
+            echo "---"
+            echo ""
+        fi
+        echo "Auto-repaired jobs that failed to start:"
         for job in "${REPAIRS[@]}"; do
             echo "  ✓ $job"
         done
         echo ""
         echo "The jobs have been reloaded and manually triggered."
         echo "Check the run log for details: tail -20 /Users/gautambiswas/Claude\ Code/.run_log"
-    } | mail -s "✓ Auto-Repaired Failed Jobs on $TODAY" "$ALERT_EMAIL"
-fi
+        alert_sent=1
+    fi
+
+    # Only send email if there's something to report
+    if [ $alert_sent -eq 1 ]; then
+        if [ ${#IN_PROGRESS[@]} -gt 0 ] && [ ${#REPAIRS[@]} -eq 0 ]; then
+            # Only in-progress, no repairs needed
+            mail -s "ℹ️ Job Status: Still Running" "$ALERT_EMAIL"
+        elif [ ${#REPAIRS[@]} -gt 0 ]; then
+            # Repairs were made
+            mail -s "✓ Auto-Repaired Failed Jobs" "$ALERT_EMAIL"
+        fi
+    fi
+} | {
+    # Read the entire output and pipe to mail if needed
+    cat_output=$(cat)
+    if [ ! -z "$cat_output" ]; then
+        if [ ${#IN_PROGRESS[@]} -gt 0 ] && [ ${#REPAIRS[@]} -eq 0 ]; then
+            echo "$cat_output" | mail -s "ℹ️ Job Status: Still Running at 7:10 AM" "$ALERT_EMAIL"
+        elif [ ${#REPAIRS[@]} -gt 0 ]; then
+            echo "$cat_output" | mail -s "✓ Auto-Repaired Failed Jobs on $TODAY" "$ALERT_EMAIL"
+        fi
+    fi
+}
 
 echo "Done."

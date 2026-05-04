@@ -71,11 +71,11 @@ done
 - Can only be changed by explicitly changing permissions
 
 ✅ **Cron verification with auto-repair** (independent of launchd)
-- Runs at 7:30 AM (30 minutes after scheduled jobs)
-- Detects jobs that failed to run
-- Auto-repairs by reloading launchd jobs and manually triggering them
-- Sends email alert about any repairs made
-- Sufficient time for job completion (typical run time: 1-5 minutes)
+- Runs at 7:10 AM (10 minutes after scheduled jobs at 7:00 AM)
+- Detects job status: completed, still running, or failed
+- Sends email if jobs are still running (normal) or if auto-repairs were needed
+- Auto-repairs failed jobs by reloading launchd and manually triggering them
+- Fast failure detection: know within 10 minutes if something went wrong
 
 ## If All Else Fails
 
