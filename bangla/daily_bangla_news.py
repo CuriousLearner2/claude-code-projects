@@ -6,12 +6,16 @@ from email.mime.multipart import MIMEMultipart
 from google import genai
 import os
 import time
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv(override=True)
 
 # Configuration
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
-RECEIVER_EMAIL = os.environ.get("RECEIVER_EMAIL")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+SENDER_EMAIL = "gautambiswas2004@icloud.com"
+RECEIVER_EMAIL = "gautambiswas2004@icloud.com"
+EMAIL_PASSWORD = "jjho-mufs-iyya-nbit"
 SMTP_SERVER = "smtp.mail.me.com"
 SMTP_PORT = 587
 
@@ -48,6 +52,10 @@ def get_latest_news():
         return None, None, str(e)
 
 def simplify_with_gemini(title, content):
+    if not GEMINI_API_KEY:
+        print("Error: GEMINI_API_KEY not found in environment.")
+        return None
+
     client = genai.Client(api_key=GEMINI_API_KEY)
     
     prompt = f"""
@@ -78,6 +86,10 @@ def send_email(subject, body, is_failure=False):
     prefix = "[Daily News - Failure]" if is_failure else "[Daily News - Simplified]"
     msg['Subject'] = f"{prefix} {subject}"
     
+    # Ensure body is a string
+    if body is None:
+        body = "No content available."
+        
     msg.attach(MIMEText(body, 'plain', 'utf-8'))
     try:
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
